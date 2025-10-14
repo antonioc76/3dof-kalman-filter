@@ -3,49 +3,154 @@ import random
 import numpy as np
 
 from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.widgets import Slider, Button
 
-def plot_state(state):
-  plt.plot(np.arange(0, 50, 1), state[0, :], label='x', color='red')
-  plt.plot(np.arange(0, 50, 1), state[1, :], label='y', color='blue')
-  plt.plot(np.arange(0, 50, 1), state[2, :], label='z', color='green')
+def plot_state(ax, state, color, linstyle='', title='', label=''):
 
-  plt.plot(np.arange(0, 50, 1), state[3, :], '--', label='vx', color='red')
-  plt.plot(np.arange(0, 50, 1), state[4, :], '--', label='vy', color='blue')
-  plt.plot(np.arange(0, 50, 1), state[5, :], '--', label='vz', color='green')
+  ax.plot(state[0, :], state[1, :], state[2, :], linstyle, label=label + ' position', color=color)
 
-  plt.legend()
+  ax.plot(state[3, :], state[4, :], state[5, :], linstyle, label=label + ' velocity')
 
-  fig = plt.figure()
-
-  axes = fig.add_subplot(111, projection='3d')
-
-  axes.plot(state[0, :], state[1, :], state[2, :], label='position')
-
-  axes.plot(state[3, :], state[4, :], state[5, :], label='velocity')
-
-  plt.legend()
-
-  plt.show()
+  if title != '':
+    ax.set_title(title)
 
 
-def plot_noise(noise, t_samples, sigma):
-  plt.hist(t_samples, bins=30, density=True)
+def plot_3d_state(ax, state, color, title='', label=''):
 
-  plt.plot(np.arange(-4*sigma, 4*sigma, 8*sigma/100), noise(np.arange(-4*sigma, 4*sigma, 8*sigma/100)))
+  ax.plot(state[0, :], state[1, :], state[2, :], '--', label=label, color=color)
 
-  plt.show()
+
+def compute_noisy_state(process_noise_sigma, initial_state):
+  noisy_state = np.zeros(shape=(6, 50))
+
+  noisy_state[:, 0] = initial_state
+
+  disturbance = np.zeros(shape=(6,50))
+
+  for i in range(np.shape(inputs)[1] - 1):
+    disturbance[:, i] = G @ inputs[:, i] + np.random.normal(0, process_noise_sigma, size=(6,))
+    noisy_state[:, i+1] = F @ noisy_state[:, i] + disturbance[:, i]
+
+  return noisy_state, disturbance
+
+
+def compute_kf(disturbance, process_noise_sigma, measurement_noise_sigma, Q_scale_factor, R_scale_factor):
+  process_noise_sigma, process_noise_func, t_samples_process = compute_noise(process_noise_sigma)
+  measurement_noise_sigma, measurement_noise_func, t_samples_measurement = compute_noise(measurement_noise_sigma)
+
+  observations = true_state[:3, :] + np.random.normal(0, measurement_noise_sigma, size=(3, 50))
+
+  estimated_state = np.zeros(shape=(6, 50))
+
+  initial_estimate = np.array([0, 0, 0, 0, 0, 0])
+
+  estimated_state[:, 0] = initial_estimate
+
+  estimate_covariance = np.zeros(shape=(6, 6, 50))
+
+  initial_covariance = np.array([[process_noise_sigma**2, 0, 0, process_noise_sigma**2, 0, 0],
+                                  [0, process_noise_sigma**2, 0, 0, process_noise_sigma**2, 0],
+                                  [0, 0, process_noise_sigma**2, 0, 0, process_noise_sigma**2],
+                                  [process_noise_sigma**2, 0, 0, process_noise_sigma**2, 0, 0],
+                                  [0, process_noise_sigma**2, 0, 0, process_noise_sigma**2, 0],
+                                  [0, 0, process_noise_sigma**2, 0, 0, process_noise_sigma**2]])
+
+  estimate_covariance[:, :, 0] = initial_covariance
+
+  kalman_gain = np.zeros(shape=(6, 3, 50))
+
+  measurement_covariance = np.array([[measurement_noise_sigma**2, 0, 0],
+                                              [0, measurement_noise_sigma**2, 0],
+                                              [0, 0, measurement_noise_sigma**2]])
+  
+  measurement_covariance = measurement_covariance * R_scale_factor
+
+  Q = process_noise_sigma**2 * np.eye(6)
+
+  Q = Q @ (Q_scale_factor * np.eye(6))
+
+  H = np.array([[1, 0, 0, 0, 0, 0],
+                 [0, 1, 0, 0, 0, 0],
+                 [0, 0, 1, 0, 0, 0]])
+
+  for i in range(0, inputs.shape[1]-1):
+    # predict
+    estimated_state[:, i+1] = F @ estimated_state[:, i] + disturbance[:, i]
+    estimate_covariance[:, :, i+1] = F @ estimate_covariance[:, :, i] @ F.T + Q
+
+    # correct
+    kalman_gain[:, :, i+1] = estimate_covariance[:, :, i+1] @ H.T @ np.linalg.inv(H @ estimate_covariance[:, :, i+1] @ H.T + measurement_covariance)
+    estimated_state[:, i+1] = estimated_state[:, i+1] + kalman_gain[:, :, i+1] @ (observations[:, i+1] - H @ estimated_state[:, i+1])
+    estimate_covariance[:, :, i+1] = (np.eye(6) - kalman_gain[:, :, i+1] @ H) @ estimate_covariance[:, :, i+1] @ (np.eye(6) - kalman_gain[:, :, i+1] @ H).T + kalman_gain[:, :, i+1] @ measurement_covariance @ kalman_gain[:, :, i+1].T
+
+  return observations, estimated_state
+
+
+def plot_noise(ax, noise, t_samples, sigma, label):
+  ax.hist(t_samples, bins=30, density=True)
+
+  ax.plot(np.arange(-4*sigma, 4*sigma, 8*sigma/100), noise(np.arange(-4*sigma, 4*sigma, 8*sigma/100)), label=label)
+
+  ax.set_title('noise models')
+
+
+def compute_noise(sigma):
+  process_noise_sigma = sigma
+  noise_func = lambda t: 1/(process_noise_sigma * np.sqrt(2 * np.pi)) * np.e ** (-1/2 * (t / process_noise_sigma) ** 2)
+  t_samples = np.random.normal(0, process_noise_sigma, 1000)
+
+  return sigma, noise_func, t_samples
+
+
+def plot_noisy_states(noisy_state, observations):
+  
+  plot_state(axes[1], state=true_state, label='true state', color='green')
+  plot_state(axes[1], noisy_state, title='unfiltered model & observations', label='process noise state', color='red')
+  plot_3d_state(axes[1], state=observations, label='observations', color='purple')
+
+
+def plot_filtered_state(estimated_state):
+  plot_state(axes[2], true_state, label='true state', color='green')  
+  plot_state(axes[2], estimated_state, title='kalman filtered model', linstyle='--', label='estimated_state', color='blue')
+
+
+def noise_update(val):
+  for ax in axes:
+    ax.cla()
+
+  process_noise_sigma, process_noise_func, t_samples_process = compute_noise(process_noise_slider.val)
+  measurement_noise_sigma, measurement_noise_func, t_samples_measurement = compute_noise(measurement_noise_slider.val)
+  plot_noise(axes[0], noise=process_noise_func, t_samples=t_samples_process, sigma=process_noise_sigma, label='process noise')
+  plot_noise(axes[0], noise=measurement_noise_func, t_samples=t_samples_measurement, sigma=measurement_noise_sigma, label='measurement noise')
+
+  noisy_state, disturbance = compute_noisy_state(process_noise_slider.val, initial_state=initial_state)
+  observations, estimated_state = compute_kf(disturbance, process_noise_slider.val, measurement_noise_slider.val, Q_scale_factor=Q_scale_slider.val, R_scale_factor=R_scale_slider.val)
+
+  plot_noisy_states(noisy_state=noisy_state, observations=observations)
+
+  plot_filtered_state(estimated_state=estimated_state)
+
+  fig.canvas.draw_idle()
+
+
+def optimize(val):
+  Q_scale_slider.set_val(1)
+  R_scale_slider.set_val(1)
 
 
 if __name__ == "__main__":
-  process_noise_sigma = 5
-  noise = lambda t: 1/(process_noise_sigma * np.sqrt(2 * np.pi)) * np.e ** (-1/2 * (t / process_noise_sigma) ** 2)
+  fig = plt.figure(figsize=(8, 6))
 
-  t_samples = np.random.normal(0, process_noise_sigma, 1000)
+  axes = []
+
+  axes.append(fig.add_subplot(2, 2, 1))
+  axes.append(fig.add_subplot(2, 2, 2, projection='3d'))
+  axes.append(fig.add_subplot(2, 2, 3, projection='3d'))
+
+  process_noise_sigma, process_noise_func, t_samples_process = compute_noise(1)
 
   n_samples = 50
   t = np.linspace(0, 2 * np.pi, n_samples)
-
-  plot_noise(noise=noise, t_samples=t_samples, sigma=process_noise_sigma)
 
   radius = 8 + 2 * np.sin(2 * t)
   x_accs = radius * np.cos(t) + 0.5 * np.sin(3 * t)
@@ -86,60 +191,84 @@ if __name__ == "__main__":
   for i in range(0, np.shape(inputs)[1] - 1):
     true_state[:, i+1] = F @ true_state[:, i] + G @ inputs[:, i]
 
-  plot_state(state=true_state)
-
-  noisy_state = np.zeros(shape=(6, 50))
-
-  noisy_state[:, 0] = initial_state
-
-  for i in range(np.shape(inputs)[1] - 1):
-    noisy_state[:, i+1] = F @ noisy_state[:, i] + G @ inputs[:, i] + np.random.normal(0, process_noise_sigma, size=(6,))
-
-  plot_state(noisy_state)
+  noisy_state, disturbance = compute_noisy_state(process_noise_sigma=process_noise_sigma, initial_state=initial_state)
 
   # kalman filter
 
-  measurement_noise_sigma = 2
+  measurement_noise_sigma, measurement_noise_func, t_samples_measurement = compute_noise(2)
 
-  observations = true_state[:3, :] + np.random.normal(0, measurement_noise_sigma, size=(3, 50))
+  observations, estimated_state = compute_kf(disturbance=disturbance, process_noise_sigma=process_noise_sigma, measurement_noise_sigma=measurement_noise_sigma, Q_scale_factor=1, R_scale_factor=1)
+  
+  plot_noise(axes[0], noise=process_noise_func, t_samples=t_samples_process, sigma=process_noise_sigma, label='process noise')
+  plot_noise(axes[0], noise=measurement_noise_func, t_samples=t_samples_measurement, sigma=measurement_noise_sigma, label='measurement noise')
 
-  estimated_state = np.zeros(shape=(6, 50))
+  plot_noisy_states(noisy_state=noisy_state, observations=observations)
 
-  initial_estimate = np.array([0, 0, 0, 0, 0, 0])
+  plot_filtered_state(estimated_state=estimated_state)
 
-  estimated_state[:, 0] = initial_estimate
+  process_noise_axis = fig.add_axes([0.6, 0.5, 0.3, 0.01])
+  measurement_noise_axis = fig.add_axes([0.6, 0.4, 0.3, 0.01])
+  Q_scale_axis = fig.add_axes([0.6, 0.3, 0.3, 0.01])
+  R_scale_axis = fig.add_axes([0.6, 0.2, 0.3, 0.01])
 
-  estimate_covariance = np.zeros(shape=(6, 6, 50))
+  optimize_button_axis = fig.add_axes([0.5, 0.05, 0.2, 0.1])
+  resample_button_axis = fig.add_axes([0.75, 0.05, 0.2, 0.1])
 
-  initial_covariance = np.array([[process_noise_sigma**2, 0, 0, process_noise_sigma**2, 0, 0],
-                                  [0, process_noise_sigma**2, 0, 0, process_noise_sigma**2, 0],
-                                  [0, 0, process_noise_sigma**2, 0, 0, process_noise_sigma**2],
-                                  [process_noise_sigma**2, 0, 0, process_noise_sigma**2, 0, 0],
-                                  [0, process_noise_sigma**2, 0, 0, process_noise_sigma**2, 0],
-                                  [0, 0, process_noise_sigma**2, 0, 0, process_noise_sigma**2]])
+  process_noise_slider = Slider(
+    ax=process_noise_axis,
+    label="process noise",
+    valmin=0.1,
+    valmax=25,
+    valinit=process_noise_sigma,
+    orientation='horizontal'
+  )
 
-  estimate_covariance[:, :, 0] = initial_covariance
+  measurement_noise_slider = Slider(
+    ax=measurement_noise_axis,
+    label="measurement noise",
+    valmin=0.1,
+    valmax=25,
+    valinit=measurement_noise_sigma,
+    orientation='horizontal'
+  )
 
-  kalman_gain = np.zeros(shape=(6, 3, 50))
+  Q_scale_slider = Slider(
+    ax=Q_scale_axis,
+    label="Q matrix scale",
+    valmin=0.1,
+    valmax=25,
+    valinit=1,
+    orientation='horizontal'
+  )
 
-  measurement_covariance = np.array([[measurement_noise_sigma**2, 0, 0],
-                                              [0, measurement_noise_sigma**2, 0],
-                                              [0, 0, measurement_noise_sigma**2]])
+  R_scale_slider = Slider(
+    ax=R_scale_axis,
+    label="R matrix scale",
+    valmin=0.1,
+    valmax=25,
+    valinit=1,
+    orientation='horizontal'
+  )
 
-  Q = process_noise_sigma**2 * np.eye(6)
+  optimize_button = Button(
+    ax=optimize_button_axis,
+    label="optimize"
+  )
 
-  H = np.array([[1, 0, 0, 0, 0, 0],
-                 [0, 1, 0, 0, 0, 0],
-                 [0, 0, 1, 0, 0, 0]])
+  resample_button = Button(
+    ax=resample_button_axis,
+    label='resample'
+  )
 
-  for i in range(0, inputs.shape[1]-1):
-    # predict
-    estimated_state[:, i+1] = F @ estimated_state[:, i] + G @ inputs[:, i]
-    estimate_covariance[:, :, i+1] = F @ estimate_covariance[:, :, i] @ F.T + Q
+  process_noise_slider.on_changed(noise_update)
+  measurement_noise_slider.on_changed(noise_update)
 
-    # correct
-    kalman_gain[:, :, i+1] = estimate_covariance[:, :, i+1] @ H.T @ np.linalg.inv(H @ estimate_covariance[:, :, i+1] @ H.T + measurement_covariance)
-    estimated_state[:, i+1] = estimated_state[:, i+1] + kalman_gain[:, :, i+1] @ (observations[:, i+1] - H @ estimated_state[:, i+1])
-    estimate_covariance[:, :, i+1] = (np.eye(6) - kalman_gain[:, :, i+1] @ H) @ estimate_covariance[:, :, i+1] @ (np.eye(6) - kalman_gain[:, :, i+1] @ H).T + kalman_gain[:, :, i+1] @ measurement_covariance @ kalman_gain[:, :, i+1].T
+  Q_scale_slider.on_changed(noise_update)
+  R_scale_slider.on_changed(noise_update)
 
-  plot_state(estimated_state)
+  optimize_button.on_clicked(optimize)
+  resample_button.on_clicked(noise_update)
+  
+  plt.show()
+
+  
