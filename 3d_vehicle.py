@@ -127,7 +127,7 @@ def noise_update(val):
   plot_noise(axes[0], noise=process_noise_func, t_samples=t_samples_process, sigma=process_noise_sigma, label='process noise')
   plot_noise(axes[0], noise=measurement_noise_func, t_samples=t_samples_measurement, sigma=measurement_noise_sigma, label='measurement noise')
 
-  noisy_state, disturbance = compute_noisy_state(process_noise_slider.val, initial_state=initial_state)
+  noisy_state, disturbance = compute_noisy_state(process_noise_slider.val, initial_state=np.zeros(shape=(6,)))
   observations, estimated_state = compute_kf(disturbance, process_noise_slider.val, measurement_noise_slider.val, Q_override=Q_diagonal.val, R_override=R_diagonal.val)
 
   plot_noisy_states(noisy_state=noisy_state, observations=observations)
@@ -140,13 +140,17 @@ def noise_update(val):
 def optimize(event):
     new_q_val = process_noise_slider.val ** 2
     new_q_max = new_q_val * 2
+    new_q_min = new_q_val / 2
     Q_diagonal.valmax = new_q_max
+    Q_diagonal.valmin = min(0.1, new_q_min)
     Q_diagonal.ax.set_xlim(Q_diagonal.valmin, Q_diagonal.valmax)
     Q_diagonal.set_val(new_q_val)
 
     new_r_val = measurement_noise_slider.val ** 2
     new_r_max = new_r_val * 2
+    new_r_min = new_r_val / 2
     R_diagonal.valmax = new_r_max
+    R_diagonal.valmin = min(0.1, new_r_min)
     R_diagonal.ax.set_xlim(R_diagonal.valmin, R_diagonal.valmax)
     R_diagonal.set_val(new_r_val)
 
@@ -163,8 +167,6 @@ if __name__ == "__main__":
   axes.append(fig.add_subplot(2, 2, 3, projection='3d'))
 
   process_noise_sigma, process_noise_func, t_samples_process = compute_noise(2)
-
-  initial_process_noise_Sigma = process_noise_sigma
 
   n_samples = 50
   t = np.linspace(0, 2 * np.pi, n_samples)
@@ -183,7 +185,7 @@ if __name__ == "__main__":
 
   inputs = np.vstack([x_accs, y_accs, z_accs])
 
-  delta_t = 0.5
+  delta_t = 0.35
 
   F = np.array([[1, 0, 0, delta_t, 0, 0],
                  [0, 1, 0, 0, delta_t, 0],
@@ -208,11 +210,11 @@ if __name__ == "__main__":
   for i in range(0, np.shape(inputs)[1] - 1):
     true_state[:, i+1] = F @ true_state[:, i] + G @ inputs[:, i]
 
-  noisy_state, disturbance = compute_noisy_state(process_noise_sigma=process_noise_sigma, initial_state=initial_state)
+  noisy_state, disturbance = compute_noisy_state(process_noise_sigma=process_noise_sigma, initial_state=np.zeros(shape=(6,)))
 
   # kalman filter
 
-  measurement_noise_sigma, measurement_noise_func, t_samples_measurement = compute_noise(5)
+  measurement_noise_sigma, measurement_noise_func, t_samples_measurement = compute_noise(4)
 
   initial_measurement_noise_sigma = measurement_noise_sigma
 
@@ -254,7 +256,7 @@ if __name__ == "__main__":
   Q_diagonal = Slider(
     ax=Q_scale_axis,
     label="Q matrix diagonal",
-    valmin=0.1,
+    valmin=min(0.1, process_noise_sigma**2/2),
     valmax=process_noise_sigma**2*2,
     valinit=process_noise_sigma**2,
     orientation='horizontal'
@@ -263,7 +265,7 @@ if __name__ == "__main__":
   R_diagonal = Slider(
     ax=R_scale_axis,
     label="R matrix diagonal",
-    valmin=0.1,
+    valmin=min(0.1, measurement_noise_sigma**2/2),
     valmax=measurement_noise_sigma**2*2,
     valinit=measurement_noise_sigma**2,
     orientation='horizontal'
