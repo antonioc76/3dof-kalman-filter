@@ -34,7 +34,7 @@ def compute_noisy_state(process_noise_sigma, initial_state):
   return noisy_state, disturbance
 
 
-def compute_kf(disturbance, process_noise_sigma, measurement_noise_sigma, Q_scale_factor, R_scale_factor):
+def compute_kf(disturbance, process_noise_sigma, measurement_noise_sigma, Q_override, R_override):
   process_noise_sigma, process_noise_func, t_samples_process = compute_noise(process_noise_sigma)
   measurement_noise_sigma, measurement_noise_func, t_samples_measurement = compute_noise(measurement_noise_sigma)
 
@@ -63,11 +63,15 @@ def compute_kf(disturbance, process_noise_sigma, measurement_noise_sigma, Q_scal
                                               [0, measurement_noise_sigma**2, 0],
                                               [0, 0, measurement_noise_sigma**2]])
   
-  measurement_covariance = measurement_covariance * R_scale_factor
+  measurement_covariance = R_override * np.eye(3)
 
   Q = process_noise_sigma**2 * np.eye(6)
 
-  Q = Q @ (Q_scale_factor * np.eye(6))
+  print(Q)
+
+  Q = Q_override * np.eye(6)
+
+  print(Q)
 
   H = np.array([[1, 0, 0, 0, 0, 0],
                  [0, 1, 0, 0, 0, 0],
@@ -124,7 +128,7 @@ def noise_update(val):
   plot_noise(axes[0], noise=measurement_noise_func, t_samples=t_samples_measurement, sigma=measurement_noise_sigma, label='measurement noise')
 
   noisy_state, disturbance = compute_noisy_state(process_noise_slider.val, initial_state=initial_state)
-  observations, estimated_state = compute_kf(disturbance, process_noise_slider.val, measurement_noise_slider.val, Q_scale_factor=Q_scale_slider.val, R_scale_factor=R_scale_slider.val)
+  observations, estimated_state = compute_kf(disturbance, process_noise_slider.val, measurement_noise_slider.val, Q_override=Q_diagonal.val, R_override=R_diagonal.val)
 
   plot_noisy_states(noisy_state=noisy_state, observations=observations)
 
@@ -133,9 +137,20 @@ def noise_update(val):
   fig.canvas.draw_idle()
 
 
-def optimize(val):
-  Q_scale_slider.set_val(1)
-  R_scale_slider.set_val(1)
+def optimize(event):
+    new_q_val = process_noise_slider.val ** 2
+    new_q_max = new_q_val * 2
+    Q_diagonal.valmax = new_q_max
+    Q_diagonal.ax.set_xlim(Q_diagonal.valmin, Q_diagonal.valmax)
+    Q_diagonal.set_val(new_q_val)
+
+    new_r_val = measurement_noise_slider.val ** 2
+    new_r_max = new_r_val * 2
+    R_diagonal.valmax = new_r_max
+    R_diagonal.ax.set_xlim(R_diagonal.valmin, R_diagonal.valmax)
+    R_diagonal.set_val(new_r_val)
+
+    fig.canvas.draw_idle()
 
 
 if __name__ == "__main__":
@@ -147,7 +162,9 @@ if __name__ == "__main__":
   axes.append(fig.add_subplot(2, 2, 2, projection='3d'))
   axes.append(fig.add_subplot(2, 2, 3, projection='3d'))
 
-  process_noise_sigma, process_noise_func, t_samples_process = compute_noise(1)
+  process_noise_sigma, process_noise_func, t_samples_process = compute_noise(2)
+
+  initial_process_noise_Sigma = process_noise_sigma
 
   n_samples = 50
   t = np.linspace(0, 2 * np.pi, n_samples)
@@ -195,9 +212,11 @@ if __name__ == "__main__":
 
   # kalman filter
 
-  measurement_noise_sigma, measurement_noise_func, t_samples_measurement = compute_noise(2)
+  measurement_noise_sigma, measurement_noise_func, t_samples_measurement = compute_noise(5)
 
-  observations, estimated_state = compute_kf(disturbance=disturbance, process_noise_sigma=process_noise_sigma, measurement_noise_sigma=measurement_noise_sigma, Q_scale_factor=1, R_scale_factor=1)
+  initial_measurement_noise_sigma = measurement_noise_sigma
+
+  observations, estimated_state = compute_kf(disturbance=disturbance, process_noise_sigma=process_noise_sigma, measurement_noise_sigma=measurement_noise_sigma, Q_override=process_noise_sigma**2, R_override=measurement_noise_sigma**2)
   
   plot_noise(axes[0], noise=process_noise_func, t_samples=t_samples_process, sigma=process_noise_sigma, label='process noise')
   plot_noise(axes[0], noise=measurement_noise_func, t_samples=t_samples_measurement, sigma=measurement_noise_sigma, label='measurement noise')
@@ -232,21 +251,21 @@ if __name__ == "__main__":
     orientation='horizontal'
   )
 
-  Q_scale_slider = Slider(
+  Q_diagonal = Slider(
     ax=Q_scale_axis,
-    label="Q matrix scale",
+    label="Q matrix diagonal",
     valmin=0.1,
-    valmax=25,
-    valinit=1,
+    valmax=process_noise_sigma**2*2,
+    valinit=process_noise_sigma**2,
     orientation='horizontal'
   )
 
-  R_scale_slider = Slider(
+  R_diagonal = Slider(
     ax=R_scale_axis,
-    label="R matrix scale",
+    label="R matrix diagonal",
     valmin=0.1,
-    valmax=25,
-    valinit=1,
+    valmax=measurement_noise_sigma**2*2,
+    valinit=measurement_noise_sigma**2,
     orientation='horizontal'
   )
 
@@ -263,8 +282,8 @@ if __name__ == "__main__":
   process_noise_slider.on_changed(noise_update)
   measurement_noise_slider.on_changed(noise_update)
 
-  Q_scale_slider.on_changed(noise_update)
-  R_scale_slider.on_changed(noise_update)
+  Q_diagonal.on_changed(noise_update)
+  R_diagonal.on_changed(noise_update)
 
   optimize_button.on_clicked(optimize)
   resample_button.on_clicked(noise_update)
